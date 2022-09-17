@@ -72,24 +72,122 @@ local bottomBar = window.create(term.current(), 1, tH, tW, 1)
 
 EditorConf = {
     gutterBG = colors.black,
-    gutterFG = colors.gray,
+    gutterMarkerBG = colors.black,
+    gutterMarkerSize = 0,
     mainBG = colors.black,
     mainFG = colors.white,
 }
 
+GutterDefaults = {
+    color = colors.gray,
+    marker = "",
+    priority = -99999999,
+    mode = "append"
+}
+NoDefaultMarkers = {
+    marker = "",
+    mode = "replace",
+    priority = -99999998
+}
+
+GutterOverrides = {
+    --[[ EXAMPLE:
+    [1] = {
+        NoDefaultMarkers,
+        {
+            color = colors.blue,
+            marker = "\x18",
+            priority = 1,
+            mode = "append"
+        },
+        {
+            color = colors.blue,
+            marker = "\x19",
+            priority = 1,
+            mode = "append"
+        },
+        {
+            color = colors.red,
+            marker = "\x07",
+            priority = 5,
+            mode = "append"
+        },
+        {
+            color = colors.green,
+            marker = "\x10",
+            priority = 0,
+            mode = "append"
+        },
+        {
+            marker = "\x1f",
+            priority = -1,
+            mode = "append"
+        }
+    }
+    ]]--
+}
+
+function table.clone(org)
+    return {table.unpack(org)}
+end
+function table.merge(one, two)
+    local result = {}
+    for _, v in ipairs(one) do
+        table.insert(result, v)
+    end
+    for _, v in ipairs(two) do
+        table.insert(result, v)
+    end
+    return result
+end
+
 local function drawInitial(win, data)
-    win.clear()
+    recolor(win, EditorConf.mainBG, EditorConf.mainFG)
     local w, h = win.getSize()
     local lineCount = 0
     win.setCursorPos(1, 1)
     for _ in data:gmatch("\n") do lineCount = lineCount + 1 end
     local function writeGutter(line)
         win.setBackgroundColor(EditorConf.gutterBG)
-        win.setTextColor(EditorConf.gutterFG)
+
+        -- sort out gutter data
+        local gutterDatas = table.merge(table.clone(GutterOverrides[line] or {}), {GutterDefaults})
+        table.sort(gutterDatas, function(a, b) return a.priority < b.priority end)
+
+        local gutterData = {}
+        local markers = {}
+        local totalMarkerLen = 0
+        for _, gD in ipairs(gutterDatas) do
+            local mode = gD.mode or GutterDefaults.mode
+            local color = gD.color or GutterDefaults.color
+            for k, v in pairs(gD) do
+                if k == "color" then
+                    gutterData.color = v
+                elseif k == "marker" then
+                    if mode == "append" then
+                        table.insert(markers, {text=v, color=color})
+                        totalMarkerLen = totalMarkerLen + #v
+                    elseif mode == "replace" then
+                        markers = {{text=v, color=color}}
+                        totalMarkerLen = #v
+                    end
+                end
+            end
+        end
+
+        local spacing = (" "):rep(EditorConf.gutterMarkerSize-totalMarkerLen)
+        win.setBackgroundColor(EditorConf.gutterMarkerBG)
+        win.write(spacing)
+        for _, m in ipairs(markers) do
+            win.setTextColor(m.color)
+            win.write(m.text)
+        end
+        win.setBackgroundColor(EditorConf.gutterBG)
+        win.setTextColor(gutterData.color)
         win.write(" ")
         win.write((" "):rep(#(""..lineCount)-#(""..line))..line)
         win.setBackgroundColor(EditorConf.mainBG)
-        win.setTextColor(EditorConf.gutterFG)
+        win.setTextColor(gutterData.color)
         win.write("\x95")
         win.setTextColor(EditorConf.mainFG)
     end
@@ -101,7 +199,7 @@ local function drawInitial(win, data)
             writeGutter(cY+1)
             recolor(bottomBar, colors.orange, colors.black)
             bottomBar.setCursorPos(1, 1)
-            bottomBar.write(" Render: "..cY.."/"..lineCount)
+            bottomBar.write(" Initial render: "..cY.."/"..lineCount)
         elseif char == "\r" then
             lineEndings = "CRLF"
             win.setCursorPos(1, cY)
@@ -146,6 +244,7 @@ if file == nil then
 else
     fileName = file:match("([^/]+)$")
 end
+local isReadOnly = fs.isReadOnly(cwd) or fs.isReadOnly(file)
 local fileExtension
 if fileName:match("%.") then
     fileName, fileExtension = fileName:match("([^.]*)%.(.-)$")
@@ -205,6 +304,13 @@ drawInitial(editWindow, contents)
 recolor(bottomBar, colors.blue, colors.white)
 drawBottomBar(bottomBar)
 
-read()
-term.clear()
-term.setCursorPos(1, 1)
+local function cleanExit()
+    term.clear()
+    term.setCursorPos(1, 1)
+end
+
+-- main loop for editing
+local function editTick()
+    local event, key, isHeld = os.pullEvent()
+    
+end
