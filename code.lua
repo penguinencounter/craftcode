@@ -3,14 +3,20 @@
 ]]--
 package.path = package.path .. ";.codedata/?.lua"
 
+
 local quicksum = require "quicksum"
 
 local args = {...}
 
 local file = args[1]
 
+local DRAWING_CHARS = {
+    cross="\x7f"
+}
+
 local cwd = shell.dir()
 if cwd ~= "/" then cwd = cwd .. "/" end
+local lineEndings = "LF"
 
 local function validate()
     local codeBomFile = fs.exists(cwd .. ".codeBOM")
@@ -29,21 +35,139 @@ local function validate()
 end
 
 local function loadInFile()
-    if file == nil then
+    if file == nil or file == "<new>" then
         print("code: no file specified")
-        return ""
+        file = "<new>"
+        return true, ""
     end
     local f = fs.open(cwd .. file, "r")
     if f == nil then
+        if fs.isDir(cwd .. file) then
+            printError("code: " .. file .. " is a directory")
+            return false, file.." is a directory"
+        end
         print("code: could not open file " .. file)
-        return ""
+        return true, ""
     end
     local data = f.readAll()
     f.close()
-    return data
+    return true, data
 end
 
 if not validate() then return end
-local contents = loadInFile()
 
-print(contents)
+local function recolor(win, newColor, newTColor)
+    win.setBackgroundColor(newColor)
+    win.setTextColor(newTColor)
+    win.clear()
+end
+
+local line = 1
+local col = 1
+
+EditorConf = {
+    gutterBG = colors.black,
+    gutterFG = colors.gray,
+    mainBG = colors.black,
+    mainFG = colors.white,
+}
+
+local function drawInitial(win, data)
+    win.clear()
+    win.setCursorPos(1, 1)
+    local lineCount = 0
+    for _ in data:gmatch("\n") do lineCount = lineCount + 1 end
+    local function writeGutter(line)
+        win.setBackgroundColor(EditorConf.gutterBG)
+        win.setTextColor(EditorConf.gutterFG)
+        win.write(" ")
+        win.write((" "):rep(#(""..lineCount)-#(""..line))..line)
+        win.setBackgroundColor(EditorConf.mainBG)
+        win.setTextColor(EditorConf.gutterFG)
+        win.write("\x95")
+        win.setTextColor(EditorConf.mainFG)
+    end
+    writeGutter(1)
+    for char in data:gmatch(".") do
+        local _, cY = win.getCursorPos()
+        if char == "\n" then
+            win.setCursorPos(1, cY+1)
+            writeGutter(cY+1)
+        elseif char == "\r" then
+            lineEndings = "CRLF"
+            win.setCursorPos(1, cY)
+        else
+            win.write(char)
+        end
+    end
+end
+
+local function floodChars(win, which)
+    local w, h = win.getSize()
+    for y = 1, h do
+        win.setCursorPos(1, y)
+        for x = 1, w do
+            win.write(which)
+        end
+    end
+end
+
+BottomBarConf = {
+    fileBG = colors.gray,
+    fileFG = colors.white,
+    mainBG = colors.blue,
+    mainFG = colors.white,
+    maxFileLen = 10,
+}
+local fileName = file:match("([^/]+)$")
+if #fileName > BottomBarConf.maxFileLen then
+    fileName = fileName:sub(1, BottomBarConf.maxFileLen-3) .. "..."
+end
+local function drawBottomBar(win)  -- TODO extensibility
+    local w, h = win.getSize()
+    win.clear()
+    win.setBackgroundColor(BottomBarConf.fileBG)
+    win.setTextColor(BottomBarConf.fileFG)
+    win.setCursorPos(1, 1)
+    local leftText = " " .. fileName
+    win.write(leftText)
+    win.setTextColor(BottomBarConf.fileBG)
+    win.setBackgroundColor(BottomBarConf.mainBG)
+    win.write("\x9f")
+    win.setTextColor(BottomBarConf.mainFG)
+    local rightText = line .. ":" .. col .. " " .. lineEndings .. " "
+    win.write((" "):rep(w-#rightText-#leftText-1))
+    win.write(rightText)
+end
+
+-- Initial file loading process
+local tW, tH = term.getSize()
+recolor(term, colors.black, colors.white)
+local editWindow = window.create(term.current(), 1, 2, tW, tH-2)
+recolor(editWindow, colors.black, colors.gray)
+local topBar = window.create(term.current(), 1, 1, tW, 1)
+recolor(topBar, colors.gray, colors.white)
+local bottomBar = window.create(term.current(), 1, tH, tW, 1)
+recolor(bottomBar, colors.red, colors.white)
+bottomBar.write("Loading contents...")
+editWindow.setCursorPos(1, 1)
+floodChars(editWindow, DRAWING_CHARS.cross)
+local ok, contents = loadInFile()
+recolor(editWindow, colors.black, colors.white)
+if not ok then
+    recolor(editWindow, colors.black, colors.red)
+    recolor(bottomBar, colors.red, colors.white)
+    bottomBar.setCursorPos(1, 1)
+    bottomBar.write("[Error] " .. contents:sub(1, 30) .. "...")
+    editWindow.setCursorPos(1, 1)
+    editWindow.write(contents)
+    editWindow.setCursorPos(1, 2)
+    editWindow.write("Press any key to exit")
+    os.pullEvent("key")
+    term.clear()
+    term.setCursorPos(1, 1)
+    return
+end
+drawInitial(editWindow, contents)
+recolor(bottomBar, colors.blue, colors.white)
+drawBottomBar(bottomBar)
