@@ -65,6 +65,11 @@ end
 local line = 1
 local col = 1
 
+local tW, tH = term.getSize()
+local editWindow = window.create(term.current(), 1, 2, tW, tH-2)
+local topBar = window.create(term.current(), 1, 1, tW, 1)
+local bottomBar = window.create(term.current(), 1, tH, tW, 1)
+
 EditorConf = {
     gutterBG = colors.black,
     gutterFG = colors.gray,
@@ -74,8 +79,9 @@ EditorConf = {
 
 local function drawInitial(win, data)
     win.clear()
-    win.setCursorPos(1, 1)
+    local w, h = win.getSize()
     local lineCount = 0
+    win.setCursorPos(1, 1)
     for _ in data:gmatch("\n") do lineCount = lineCount + 1 end
     local function writeGutter(line)
         win.setBackgroundColor(EditorConf.gutterBG)
@@ -89,10 +95,13 @@ local function drawInitial(win, data)
     end
     writeGutter(1)
     for char in data:gmatch(".") do
-        local _, cY = win.getCursorPos()
+        local cX, cY = win.getCursorPos()
         if char == "\n" then
             win.setCursorPos(1, cY+1)
             writeGutter(cY+1)
+            recolor(bottomBar, colors.orange, colors.black)
+            bottomBar.setCursorPos(1, 1)
+            bottomBar.write(" Render: "..cY.."/"..lineCount)
         elseif char == "\r" then
             lineEndings = "CRLF"
             win.setCursorPos(1, cY)
@@ -130,12 +139,27 @@ BottomBarConf = {
     mainFG = colors.white,
     maxFileLen = 15,
 }
-local fileName, fileExtension = file:match("([^/]+)[.]([%w]+)$")
+
+local fileName
+if file == nil then
+    fileName = "<new>"
+else
+    fileName = file:match("([^/]+)$")
+end
+local fileExtension
+if fileName:match("%.") then
+    fileName, fileExtension = fileName:match("([^.]*)%.(.-)$")
+    fileExtension = "."..fileExtension
+else
+    fileExtension = ""
+end
 if #fileName > BottomBarConf.maxFileLen then
     fileName = fileName:sub(1, BottomBarConf.maxFileLen-3) .. ".."
 end
-fileName = fileName .. "." .. fileExtension
+fileName = fileName .. fileExtension
+
 local ok, contents
+
 local function drawBottomBar(win)  -- TODO extensibility
     local w, h = win.getSize()
     win.clear()
@@ -154,13 +178,9 @@ local function drawBottomBar(win)  -- TODO extensibility
 end
 
 -- Initial file loading process
-local tW, tH = term.getSize()
 recolor(term, colors.black, colors.white)
-local editWindow = window.create(term.current(), 1, 2, tW, tH-2)
 recolor(editWindow, colors.black, colors.gray)
-local topBar = window.create(term.current(), 1, 1, tW, 1)
 recolor(topBar, colors.gray, colors.white)
-local bottomBar = window.create(term.current(), 1, tH, tW, 1)
 recolor(bottomBar, colors.red, colors.white)
 bottomBar.write("Loading contents...")
 editWindow.setCursorPos(1, 1)
