@@ -112,24 +112,37 @@ local function floodChars(win, which)
     end
 end
 
+local function shortNumber(number)
+    local strv = ""..number
+    if #strv > 6 then
+        return math.floor(number/1000000) .. "MB"
+    elseif #strv > 3 then
+        return math.floor(number/1000) .. "KB"
+    else
+        return strv
+    end
+end
+
 BottomBarConf = {
     fileBG = colors.gray,
     fileFG = colors.white,
     mainBG = colors.blue,
     mainFG = colors.white,
-    maxFileLen = 10,
+    maxFileLen = 15,
 }
-local fileName = file:match("([^/]+)$")
+local fileName, fileExtension = file:match("([^/]+)[.]([%w]+)$")
 if #fileName > BottomBarConf.maxFileLen then
-    fileName = fileName:sub(1, BottomBarConf.maxFileLen-3) .. "..."
+    fileName = fileName:sub(1, BottomBarConf.maxFileLen-3) .. ".."
 end
+fileName = fileName .. "." .. fileExtension
+local ok, contents
 local function drawBottomBar(win)  -- TODO extensibility
     local w, h = win.getSize()
     win.clear()
     win.setBackgroundColor(BottomBarConf.fileBG)
     win.setTextColor(BottomBarConf.fileFG)
     win.setCursorPos(1, 1)
-    local leftText = " " .. fileName
+    local leftText = " " .. fileName .. " ".. shortNumber(#contents)
     win.write(leftText)
     win.setTextColor(BottomBarConf.fileBG)
     win.setBackgroundColor(BottomBarConf.mainBG)
@@ -152,7 +165,7 @@ recolor(bottomBar, colors.red, colors.white)
 bottomBar.write("Loading contents...")
 editWindow.setCursorPos(1, 1)
 floodChars(editWindow, DRAWING_CHARS.cross)
-local ok, contents = loadInFile()
+ok, contents = loadInFile()
 recolor(editWindow, colors.black, colors.white)
 if not ok then
     recolor(editWindow, colors.black, colors.red)
@@ -171,3 +184,7 @@ end
 drawInitial(editWindow, contents)
 recolor(bottomBar, colors.blue, colors.white)
 drawBottomBar(bottomBar)
+
+read()
+term.clear()
+term.setCursorPos(1, 1)
