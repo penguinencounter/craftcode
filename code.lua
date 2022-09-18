@@ -36,17 +36,14 @@ end
 
 local function loadInFile()
     if file == nil or file == "<new>" then
-        print("code: no file specified")
         file = "<new>"
         return true, ""
     end
     local f = fs.open(cwd .. file, "r")
     if f == nil then
         if fs.isDir(cwd .. file) then
-            printError("code: " .. file .. " is a directory")
             return false, file.." is a directory"
         end
-        print("code: could not open file " .. file)
         return true, ""
     end
     local data = f.readAll()
@@ -226,7 +223,7 @@ local function shortNumber(number)
     elseif #strv > 3 then
         return math.floor(number/1000) .. "KB"
     else
-        return strv
+        return strv .. "B"
     end
 end
 
@@ -236,6 +233,10 @@ BottomBarConf = {
     mainBG = colors.blue,
     mainFG = colors.white,
     maxFileLen = 15,
+    maxLeftSideLen = 20,
+    readOnlyBG = colors.orange,
+    readOnlyFG = colors.black,
+    readOnlyText = " R-only"
 }
 
 local fileName
@@ -262,17 +263,53 @@ local ok, contents
 local function drawBottomBar(win)  -- TODO extensibility
     local w, h = win.getSize()
     win.clear()
-    win.setBackgroundColor(BottomBarConf.fileBG)
-    win.setTextColor(BottomBarConf.fileFG)
-    win.setCursorPos(1, 1)
-    local leftText = " " .. fileName .. " ".. shortNumber(#contents)
-    win.write(leftText)
-    win.setTextColor(BottomBarConf.fileBG)
-    win.setBackgroundColor(BottomBarConf.mainBG)
-    win.write("\x9f")
+    local function leftSide(disableFileName, disableSize)
+        disableFileName = disableFileName or false
+        disableSize = disableSize or false
+
+        local totalWidth = 0
+
+        win.setBackgroundColor(BottomBarConf.fileBG)
+        win.setTextColor(BottomBarConf.fileFG)
+        win.setCursorPos(1, 1)
+        local leftText = ""
+        if not disableFileName then
+            leftText = leftText .. " " .. fileName
+        end
+        if not disableSize then
+            leftText = leftText .. " (" .. shortNumber(#contents) .. ")"
+        end
+        if isReadOnly then
+            totalWidth = totalWidth + #BottomBarConf.readOnlyText + 1 -- divider
+        end
+        totalWidth = totalWidth + #leftText
+        if totalWidth > BottomBarConf.maxLeftSideLen and not (disableFileName and disableSize) then
+            if not (disableSize or disableFileName) then
+                return leftSide(false, true)
+            elseif not disableFileName and disableSize then
+                return leftSide(true, false)
+            else
+                return leftSide(true, true)
+            end
+        else
+            win.write(leftText)
+            win.setTextColor(BottomBarConf.fileBG)
+            win.setBackgroundColor(isReadOnly and BottomBarConf.readOnlyBG or BottomBarConf.mainBG)
+            win.write("\x9f")
+            if isReadOnly then
+                win.setTextColor(BottomBarConf.readOnlyFG)
+                win.write(BottomBarConf.readOnlyText)
+                win.setTextColor(BottomBarConf.readOnlyBG)
+                win.setBackgroundColor(BottomBarConf.mainBG)
+                win.write("\x9f")
+            end
+        end
+        return totalWidth
+    end
+    local leftWidth = leftSide()
     win.setTextColor(BottomBarConf.mainFG)
     local rightText = line .. ":" .. col .. " " .. lineEndings .. " "
-    win.write((" "):rep(w-#rightText-#leftText-1))
+    win.write((" "):rep(w-#rightText-leftWidth-1))
     win.write(rightText)
 end
 
@@ -314,3 +351,4 @@ local function editTick()
     local event, key, isHeld = os.pullEvent()
     
 end
+read()
