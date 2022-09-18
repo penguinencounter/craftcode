@@ -59,8 +59,8 @@ local function recolor(win, newColor, newTColor)
     win.clear()
 end
 
-local line = 1
-local col = 1
+local sLine = 1
+local sCol = 1
 
 local tW, tH = term.getSize()
 local editWindow = window.create(term.current(), 1, 2, tW, tH-2)
@@ -85,6 +85,11 @@ NoDefaultMarkers = {
     marker = "",
     mode = "replace",
     priority = -99999998
+}
+SelectedLine = {
+    priority = 0,
+    color = colors.lightGray,
+    selectedLine = true
 }
 
 GutterOverrides = {
@@ -138,71 +143,118 @@ function table.merge(one, two)
     return result
 end
 
-local function drawInitial(win, data)
-    recolor(win, EditorConf.mainBG, EditorConf.mainFG)
-    local w, h = win.getSize()
-    local lineCount = 0
-    win.setCursorPos(1, 1)
-    for _ in data:gmatch("\n") do lineCount = lineCount + 1 end
-    local function writeGutter(line)
-        win.setBackgroundColor(EditorConf.gutterBG)
+local scrollX, scrollY = 0, 0
+local totalLineCount = 0
+local lines = {}
 
-        -- sort out gutter data
-        local gutterDatas = table.merge(table.clone(GutterOverrides[line] or {}), {GutterDefaults})
-        table.sort(gutterDatas, function(a, b) return a.priority < b.priority end)
+local function writeGutter(win, line)
+    win.setBackgroundColor(EditorConf.gutterBG)
 
-        local gutterData = {}
-        local markers = {}
-        local totalMarkerLen = 0
-        for _, gD in ipairs(gutterDatas) do
-            local mode = gD.mode or GutterDefaults.mode
-            local color = gD.color or GutterDefaults.color
-            for k, v in pairs(gD) do
-                if k == "color" then
-                    gutterData.color = v
-                elseif k == "marker" then
-                    if mode == "append" then
-                        table.insert(markers, {text=v, color=color})
-                        totalMarkerLen = totalMarkerLen + #v
-                    elseif mode == "replace" then
-                        markers = {{text=v, color=color}}
-                        totalMarkerLen = #v
-                    end
+    -- sort out gutter data
+    local gutterDatas = table.merge(table.clone(GutterOverrides[line] or {}), {GutterDefaults})
+    table.sort(gutterDatas, function(a, b) return a.priority < b.priority end)
+
+    local gutterData = {}
+    local markers = {}
+    local totalMarkerLen = 0
+    for _, gD in ipairs(gutterDatas) do
+        local mode = gD.mode or GutterDefaults.mode
+        local color = gD.color or GutterDefaults.color
+        for k, v in pairs(gD) do
+            if k == "color" then
+                gutterData.color = v
+            elseif k == "marker" then
+                if mode == "append" then
+                    table.insert(markers, {text=v, color=color})
+                    totalMarkerLen = totalMarkerLen + #v
+                elseif mode == "replace" then
+                    markers = {{text=v, color=color}}
+                    totalMarkerLen = #v
                 end
             end
         end
-
-        local spacing = (" "):rep(EditorConf.gutterMarkerSize-totalMarkerLen)
-        win.setBackgroundColor(EditorConf.gutterMarkerBG)
-        win.write(spacing)
-        for _, m in ipairs(markers) do
-            win.setTextColor(m.color)
-            win.write(m.text)
-        end
-        win.setBackgroundColor(EditorConf.gutterBG)
-        win.setTextColor(gutterData.color)
-        win.write(" ")
-        win.write((" "):rep(#(""..lineCount)-#(""..line))..line)
-        win.setBackgroundColor(EditorConf.mainBG)
-        win.setTextColor(gutterData.color)
-        win.write("\x95")
-        win.setTextColor(EditorConf.mainFG)
     end
-    writeGutter(1)
-    for char in data:gmatch(".") do
-        local cX, cY = win.getCursorPos()
-        if char == "\n" then
-            win.setCursorPos(1, cY+1)
-            writeGutter(cY+1)
-            recolor(bottomBar, colors.orange, colors.black)
-            bottomBar.setCursorPos(1, 1)
-            bottomBar.write(" Initial render: "..cY.."/"..lineCount)
-        elseif char == "\r" then
-            lineEndings = "CRLF"
-            win.setCursorPos(1, cY)
-        else
-            win.write(char)
+    local counter = 0
+    local function addCounts(a) counter = counter + #a end
+
+    local spacing = (" "):rep(EditorConf.gutterMarkerSize-totalMarkerLen)
+    win.setBackgroundColor(EditorConf.gutterMarkerBG)
+    win.write(spacing)
+    addCounts(spacing)
+    for _, m in ipairs(markers) do
+        win.setTextColor(m.color)
+        win.write(m.text)
+        addCounts(m.text)
+    end
+    win.setBackgroundColor(EditorConf.gutterBG)
+    win.setTextColor(gutterData.color)
+    win.write(" ")
+    addCounts(" ")
+    local a = (" "):rep(#(""..totalLineCount)-#(""..line))..line
+    win.write(a)
+    addCounts(a)
+    win.setBackgroundColor(EditorConf.mainBG)
+    win.setTextColor(gutterData.color)
+    win.write("\x95")
+    addCounts("\x95")
+    win.setTextColor(EditorConf.mainFG)
+    return counter
+end
+
+local gutterWidth = 0
+local function renderContent(win)
+    recolor(win, EditorConf.mainBG, EditorConf.mainFG)
+    local w, h = win.getSize()
+    local low, high = scrollY+1, scrollY+h
+    for i=low,high do
+        if i > totalLineCount then break end
+        win.setCursorPos(1, i-low+1)
+        gutterWidth = writeGutter(win, i)
+        win.write(lines[i]:sub(scrollX+1, scrollX+w-gutterWidth))
+    end
+    return sCol-scrollX+gutterWidth, sLine-scrollY
+end
+
+local function updateCursorPos(viewport, newLine, newCol)
+    GutterOverrides[sLine] = GutterOverrides[sLine] or {}
+    local vX, vY = viewport.getSize()
+    local toDelete = nil
+    for i, override in ipairs(GutterOverrides[sLine]) do
+        if override.selectedLine then
+            toDelete = i
         end
+    end
+    if toDelete then
+        table.remove(GutterOverrides[sLine], toDelete)
+    end
+    sLine = newLine
+    sCol = newCol
+    if sLine < 1 then sLine = 1 end
+    if sLine > totalLineCount then sLine = totalLineCount end
+    if sCol < 1 then sCol = 1 end
+    if sLine >= scrollY + vY then
+        scrollY = sLine - vY + 1
+    elseif sLine <= scrollY then
+        scrollY = sLine - 1
+    end
+    if sCol >= scrollX + vX - gutterWidth then
+        scrollX = sCol - vX + gutterWidth
+    elseif sCol <= scrollX then
+        scrollX = sCol - 1
+    end
+    if scrollX < 0 then scrollX = 0 end
+    if scrollY < 0 then scrollY = 0 end
+    GutterOverrides[sLine] = GutterOverrides[sLine] or {}
+    table.insert(GutterOverrides[sLine], SelectedLine)
+end
+
+local function metadata(win, data)
+    recolor(win, EditorConf.mainBG, EditorConf.mainFG)
+    totalLineCount = 0
+    lines = {}
+    for line in data:gmatch("(.-)\n") do
+        totalLineCount = totalLineCount + 1
+        table.insert(lines, line)
     end
 end
 
@@ -232,11 +284,11 @@ BottomBarConf = {
     fileFG = colors.white,
     mainBG = colors.blue,
     mainFG = colors.white,
-    maxFileLen = 15,
-    maxLeftSideLen = 20,
+    maxFileLen = 10,
+    maxLeftSideLen = 30,
     readOnlyBG = colors.orange,
     readOnlyFG = colors.black,
-    readOnlyText = " R-only"
+    readOnlyText = " ro"
 }
 
 local fileName
@@ -245,7 +297,8 @@ if file == nil then
 else
     fileName = file:match("([^/]+)$")
 end
-local isReadOnly = fs.isReadOnly(cwd) or fs.isReadOnly(file)
+local isReadOnly = fs.isReadOnly(file)
+if isReadOnly == nil then isReadOnly = fs.isReadOnly(cwd) end
 local fileExtension
 if fileName:match("%.") then
     fileName, fileExtension = fileName:match("([^.]*)%.(.-)$")
@@ -308,38 +361,44 @@ local function drawBottomBar(win)  -- TODO extensibility
     end
     local leftWidth = leftSide()
     win.setTextColor(BottomBarConf.mainFG)
-    local rightText = line .. ":" .. col .. " " .. lineEndings .. " "
+    local rightText = scrollX .. "\x10 " .. scrollY .. "\x1f " .. sLine .. ":" .. sCol .. " " .. lineEndings .. " "
     win.write((" "):rep(w-#rightText-leftWidth-1))
     win.write(rightText)
 end
 
 -- Initial file loading process
-recolor(term, colors.black, colors.white)
-recolor(editWindow, colors.black, colors.gray)
-recolor(topBar, colors.gray, colors.white)
-recolor(bottomBar, colors.red, colors.white)
-bottomBar.write("Loading contents...")
-editWindow.setCursorPos(1, 1)
-floodChars(editWindow, DRAWING_CHARS.cross)
-ok, contents = loadInFile()
-recolor(editWindow, colors.black, colors.white)
-if not ok then
-    recolor(editWindow, colors.black, colors.red)
+local function startup()
+    term.setCursorBlink(true)
+    recolor(term, colors.black, colors.white)
+    recolor(editWindow, colors.black, colors.gray)
+    recolor(topBar, colors.gray, colors.white)
     recolor(bottomBar, colors.red, colors.white)
-    bottomBar.setCursorPos(1, 1)
-    bottomBar.write("[Error] " .. contents:sub(1, 30) .. "...")
+    bottomBar.write("Loading contents...")
     editWindow.setCursorPos(1, 1)
-    editWindow.write(contents)
-    editWindow.setCursorPos(1, 2)
-    editWindow.write("Press any key to exit")
-    os.pullEvent("key")
-    term.clear()
-    term.setCursorPos(1, 1)
-    return
+    floodChars(editWindow, DRAWING_CHARS.cross)
+    ok, contents = loadInFile()
+    recolor(editWindow, colors.black, colors.white)
+    if not ok then
+        recolor(editWindow, colors.black, colors.red)
+        recolor(bottomBar, colors.red, colors.white)
+        bottomBar.setCursorPos(1, 1)
+        bottomBar.write("[Error] " .. contents:sub(1, 30) .. "...")
+        editWindow.setCursorPos(1, 1)
+        editWindow.write(contents)
+        editWindow.setCursorPos(1, 2)
+        editWindow.write("Press any key to exit")
+        os.pullEvent("key")
+        term.clear()
+        term.setCursorPos(1, 1)
+        return true
+    end
+    metadata(editWindow, contents)
+    recolor(bottomBar, colors.blue, colors.white)
+    drawBottomBar(bottomBar)
+    updateCursorPos(editWindow, 1, 1)
+    renderContent(editWindow)
+    return false
 end
-drawInitial(editWindow, contents)
-recolor(bottomBar, colors.blue, colors.white)
-drawBottomBar(bottomBar)
 
 local function cleanExit()
     term.clear()
@@ -348,7 +407,31 @@ end
 
 -- main loop for editing
 local function editTick()
-    local event, key, isHeld = os.pullEvent()
-    
+    local event = {os.pullEvent()}
+    if event[1] == "key" then
+        local _, key, held = unpack(event)
+        if key == keys.right then
+            updateCursorPos(editWindow, sLine, sCol + 1)
+        elseif key == keys.left then
+            updateCursorPos(editWindow, sLine, sCol - 1)
+        elseif key == keys.up then
+            updateCursorPos(editWindow, sLine - 1, sCol)
+        elseif key == keys.down then
+            updateCursorPos(editWindow, sLine + 1, sCol)
+        elseif key == keys.home then
+            updateCursorPos(editWindow, sLine, 1)
+        elseif key == keys["end"] then
+            updateCursorPos(editWindow, sLine, #lines[sLine] + 1)
+        end
+    end
+    local cX, cY = renderContent(editWindow)
+    recolor(bottomBar, colors.blue, colors.white)
+    drawBottomBar(bottomBar)
+    editWindow.setCursorPos(cX, cY)
 end
-read()
+
+if startup() then return end
+while true do
+    editTick()
+end
+cleanExit()
