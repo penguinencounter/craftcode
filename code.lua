@@ -16,7 +16,7 @@ local DRAWING_CHARS = {
 
 local cwd = shell.dir()
 if cwd ~= "/" then cwd = cwd .. "/" end
-local lineEndings = "LF"
+local fp = cwd .. file
 
 local function validate()
     local codeBomFile = fs.exists(cwd .. ".codeBOM")
@@ -34,17 +34,33 @@ local function validate()
     return true
 end
 
+local isReadOnly
 local function loadInFile()
+    if file:match("^/") then fp = file end
     if file == nil or file == "<new>" then
         file = "<new>"
-        return true, ""
-    end
-    local f = fs.open(cwd .. file, "r")
-    if f == nil then
-        if fs.isDir(cwd .. file) then
-            return false, file.." is a directory"
+        isReadOnly = fs.isReadOnly(cwd)
+        if isReadOnly then
+            return false, "Cannot create file in read-only directory "..cwd
         end
         return true, ""
+    end
+    local f = fs.open(fp, "r")
+    if f == nil then
+        if fs.isDir(fp) then
+            return false, file.." is a directory"
+        end
+        local parentDir = fs.getDir(fp)
+        if file:match("^/") then
+            parentDir = "/"..parentDir
+        end
+        isReadOnly = fs.isReadOnly(parentDir)
+        if isReadOnly then
+            return false, "Cannot create file in read-only directory "..parentDir
+        end
+        return true, ""
+    else
+        isReadOnly = fs.isReadOnly(fp)
     end
     local data = f.readAll()
     f.close()
@@ -297,8 +313,6 @@ if file == nil then
 else
     fileName = file:match("([^/]+)$")
 end
-local isReadOnly = fs.isReadOnly(file)
-if isReadOnly == nil then isReadOnly = fs.isReadOnly(cwd) end
 local fileExtension
 if fileName:match("%.") then
     fileName, fileExtension = fileName:match("([^.]*)%.(.-)$")
@@ -361,7 +375,7 @@ local function drawBottomBar(win)  -- TODO extensibility
     end
     local leftWidth = leftSide()
     win.setTextColor(BottomBarConf.mainFG)
-    local rightText = scrollX .. "\x10 " .. scrollY .. "\x1f " .. sLine .. ":" .. sCol .. " " .. lineEndings .. " "
+    local rightText = scrollX .. "\x10 " .. scrollY .. "\x1f " .. sLine .. ":" .. sCol .. " "
     win.write((" "):rep(w-#rightText-leftWidth-1))
     win.write(rightText)
 end
